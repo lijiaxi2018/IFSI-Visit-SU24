@@ -6,8 +6,8 @@ import struct
 
 HOST = 'localhost'
 PORT = 65432
-RECEIVE_DIRECTORY = '../Server-Laptop-Dataset/1K_Full'
-LOG_FILE = './1K_Full_Server.json'
+RECEIVE_DIRECTORY = './temp/1K_Full'
+LOG_FILE = './temp/1K_Full_Server.json'
 
 def save_image(image_data, save_path):
     with open(save_path, 'wb') as f:
