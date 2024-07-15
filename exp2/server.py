@@ -1,77 +1,99 @@
-import os
+from flask import Flask, Response
+import cv2
+import numpy as np
 import socket
-import time
-import json
 import struct
+import threading
+import time  # Import time for recording frame times
 
-HOST = 'localhost'
-PORT = 65432
-RECEIVE_DIRECTORY = '../../../assets/receive/120_1K_Full'
-LOG_FILE = '../../../assets/log/SERVER_120_1K_Full.json'
+app = Flask(__name__)
 
-def save_image(image_data, save_path):
-    with open(save_path, 'wb') as f:
-        f.write(image_data)
+# Global variable to hold the latest image and frame times
+latest_image = None
+frame_delays = []  # Store frame delays
+frame_times = []  # Store frame times
 
-def recv_all(conn, num_bytes):
-    data = b''
-    while len(data) < num_bytes:
-        packet = conn.recv(num_bytes - len(data))
-        if not packet:
-            return None
-        data += packet
-    return data
+def receive_tile(client_socket):
+    header = client_socket.recv(4)
+    tile_data_length = struct.unpack('!I', header)[0]
 
-def start_server(result_dir, host='localhost', port=65432):
-    log = []
+    tile_data = b''
+    while len(tile_data) < tile_data_length:
+        chunk = client_socket.recv(min(tile_data_length - len(tile_data), 4096))
+        tile_data += chunk
+    
+    tile = cv2.imdecode(np.frombuffer(tile_data, np.uint8), cv2.IMREAD_COLOR)
+    return tile
 
-    if not os.path.exists(result_dir):
-        os.makedirs(result_dir)
+def handle_client(client_socket):
+    global latest_image, frame_delays, frame_times
+    while True:
+        try:
+            num_rows = struct.unpack('B', client_socket.recv(1))[0]
+            num_cols = struct.unpack('B', client_socket.recv(1))[0]
 
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind((host, port))
-            s.listen()
-            print(f'Server listening on {host}:{port}...')
+            # Start time (first tile sent from client)
+            frame_start_time = struct.unpack('!d', client_socket.recv(8))[0]
 
-            conn, addr = s.accept()
-            with conn:
-                print(f'Connected by {addr}')
-                while True:
-                    image_name_len_data = recv_all(conn, 4)
-                    if not image_name_len_data:
-                        break
-                    image_name_len = int.from_bytes(image_name_len_data, 'big')
+            tiles = [receive_tile(client_socket) for _ in range(num_rows * num_cols)]
 
-                    image_name = recv_all(conn, image_name_len).decode()
-                    image_size_data = recv_all(conn, 8)
-                    image_size = int.from_bytes(image_size_data, 'big')
+            combined_rows = []
+            index = 0
+            for i in range(num_rows):
+                row_tiles = [tiles[index + j] for j in range(num_cols)]
+                combined_rows.append(np.hstack(row_tiles))
+                index += num_cols
+            latest_image = np.vstack(combined_rows)
 
-                    start_time = time.time()
-                    image_data = recv_all(conn, image_size)
-                    end_time = time.time()
+            # End time (last tile received)
+            frame_end_time = time.time()
 
-                    save_path = os.path.join(result_dir, image_name)
-                    save_image(image_data, save_path)
-                    print(f'Saved {image_name} to {save_path}')
+            frame_delay = frame_end_time - frame_start_time
+            frame_delays.append(frame_delay)
+            frame_times.append(frame_end_time)
 
-                    log.append({
-                        'image': image_name,
-                        'start_time': start_time,
-                        'end_time': end_time
-                    })
+            # Print frame delay and FPS for each frame
+            print(f"Frame Delay: {frame_delay:.6f} seconds")
+            if len(frame_times) > 1:
+                fps = 1 / (frame_times[-1] - frame_times[-2])
+                print(f"FPS: {fps:.2f}")
 
-                    # Send server's timestamps back to client
-                    conn.sendall(struct.pack('d', start_time))
-                    conn.sendall(struct.pack('d', end_time))
-    except Exception as e:
-        print(f'Error: {e}')
-    finally:
-        LOG_DIR = os.path.dirname(LOG_FILE)
-        os.makedirs(LOG_DIR, exist_ok=True)  # Ensure the directory exists
-        with open(LOG_FILE, 'w') as f:
-            json.dump(log, f, indent=4)
-        print(f'Saved log to {LOG_FILE}')
+        except (ConnectionResetError, BrokenPipeError, struct.error):
+            print("Client disconnected or error occurred")
+            break
+
+    # Calculate and print the average end-to-end frame delay and FPS
+    if frame_delays:
+        average_delay = sum(frame_delays) / len(frame_delays)
+        print(f"Average End-to-End Frame Delay: {average_delay:.6f} seconds")
+    if len(frame_times) > 1:
+        average_fps = len(frame_times) / (frame_times[-1] - frame_times[0])
+        print(f"Average FPS: {average_fps:.2f}")
+
+def video_feed():
+    global latest_image
+    while True:
+        if latest_image is not None:
+            ret, jpeg = cv2.imencode('.jpg', latest_image)
+            if ret:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + jpeg.tobytes() + b'\r\n\r\n')
+
+@app.route('/video_feed')
+def video_feed_route():
+    return Response(video_feed(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
+
+def main():
+    server_socket = socket.socket()
+    server_socket.bind(('localhost', 12345))
+    server_socket.listen(1)
+
+    threading.Thread(target=app.run, kwargs={'host':'localhost', 'port':5000}).start()
+
+    while True:
+        client_socket, addr = server_socket.accept()
+        handle_client(client_socket)
 
 if __name__ == '__main__':
-    start_server(RECEIVE_DIRECTORY, HOST, PORT)
+    main()
