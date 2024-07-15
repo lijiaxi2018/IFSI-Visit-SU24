@@ -2,12 +2,11 @@ import os
 import socket
 import time
 import json
-import struct
 
 HOST = 'localhost'
 PORT = 65432
-RECEIVE_DIRECTORY = './temp/1K_Full'
-LOG_FILE = './temp/1K_Full_Server.json'
+RECEIVE_DIRECTORY = './temp/TF_ETE_S_4K_cropped'
+LOG_FILE = './temp/TF_ETE_S_4K_cropped.json'
 
 def save_image(image_data, save_path):
     with open(save_path, 'wb') as f:
@@ -60,10 +59,6 @@ def start_server(result_dir, host='localhost', port=65432):
                         'start_time': start_time,
                         'end_time': end_time
                     })
-
-                    # Send server's timestamps back to client
-                    conn.sendall(struct.pack('d', start_time))
-                    conn.sendall(struct.pack('d', end_time))
     except Exception as e:
         print(f'Error: {e}')
     finally:
