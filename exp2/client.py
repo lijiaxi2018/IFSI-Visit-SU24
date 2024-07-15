@@ -1,89 +1,80 @@
-import os
-import socket
-import time
-import json
-import struct
 import cv2
+import socket
+import numpy as np
+import struct
+import time  # Import time for recording start time
+from feature import calculate_edge_density, calculate_corner_density, calculate_contour_density
 
-HOST = '192.168.0.242'
-PORT = 65432
-LOG_FILE = './temp/log/CLIENT_120_1K_Full.json'
-CAMERA_SOURCE = 1
 WIDTH = 3840
 HEIGHT = 1920
 
-def send_image(image_name, image_data, conn, log):
-    image_name_len = len(image_name).to_bytes(4, 'big')
-    image_size = len(image_data).to_bytes(8, 'big')
+def calculate_compression_profile(frame, num_rows, num_cols):
+    edge_density = calculate_edge_density(frame, num_rows, num_cols)
+    corner_density = calculate_corner_density(frame, num_rows, num_cols)
+    contour_density = calculate_contour_density(frame, num_rows, num_cols)
 
-    start_time = time.time()
-    conn.sendall(image_name_len)
-    conn.sendall(image_name.encode())
-    conn.sendall(image_size)
-    conn.sendall(image_data)
-    end_time = time.time()
+    combined_density = np.array([edge_density, corner_density, contour_density])
+    average_density = np.mean(combined_density, axis=0)
 
-    # Receive server's timestamps
-    server_start_time = struct.unpack('d', conn.recv(8))[0]
-    server_end_time = struct.unpack('d', conn.recv(8))[0]
+    return average_density
 
-    # Calculate bandwidth
-    duration = server_end_time - server_start_time
-    bandwidth = len(image_data) / duration  # bytes per second
+def cap_compression_profile(matrix):
+    transformed_matrix = matrix * 100 * 15
+    transformed_matrix = np.clip(transformed_matrix, 1, 50)
+    transformed_matrix = transformed_matrix.astype(int)
+    return transformed_matrix
 
-    log.append({
-        'image': image_name,
-        'client_start_time': start_time,
-        'client_end_time': end_time,
-        'server_start_time': server_start_time,
-        'server_end_time': server_end_time,
-        'duration': duration,
-        'bandwidth': bandwidth
-    })
+def send_tile(client_socket, tile, quality):
+    encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+    _, tile_encoded = cv2.imencode('.jpg', tile, encode_param)
+    tile_data = tile_encoded.tobytes()
+    header = struct.pack('!I', len(tile_data))
+    client_socket.sendall(header)
+    client_socket.sendall(tile_data)
 
-def start_client(host='localhost', port=65432, width=640, height=480):
-    log = []
+def send_image(client_socket, image, qualities):
+    rows = len(qualities)
+    cols = len(qualities[0])
+    h, w, _ = image.shape
+    tile_height, tile_width = h // rows, w // cols
+    for i in range(rows):
+        for j in range(cols):
+            tile = image[i * tile_height:(i + 1) * tile_height, j * tile_width:(j + 1) * tile_width]
+            send_tile(client_socket, tile, qualities[i][j])
+
+def main():
+    cap = cv2.VideoCapture(0)
+    client_socket = socket.socket()
+    client_socket.connect(('localhost', 12345))
 
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((host, port))
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to capture frame")
+                break
 
-            cap = cv2.VideoCapture(CAMERA_SOURCE)  # 0 is usually the default camera
-            if not cap.isOpened():
-                print("Error: Could not open camera.")
-                return
-            
             # Set the resolution
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            # cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+            # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
 
-            frame_count = 0
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-
-                image_name = f'frame_{frame_count}.jpg'
-                _, image_data = cv2.imencode('.jpg', frame)
-                image_data = image_data.tobytes()
-
-                send_image(image_name, image_data, s, log)
-                print(f'Sent {image_name}')
-                frame_count += 1
-
-                # Wait a bit before capturing the next frame
-                time.sleep(1)
-
-            cap.release()
-
-    except Exception as e:
-        print(f'Error: {e}')
+            qualities = [[100, 100, 100, 100], [100, 100, 100, 100]]
+            # qualities = cap_compression_profile(calculate_compression_profile(frame, 2, 4))
+            
+            print("Compression Profile:\n", qualities)
+            # Send the number of rows and columns
+            num_rows, num_cols = len(qualities), len(qualities[0])
+            client_socket.sendall(struct.pack('B', num_rows))
+            client_socket.sendall(struct.pack('B', num_cols))
+            
+            # Send the timestamp
+            timestamp = time.time()
+            client_socket.sendall(struct.pack('!d', timestamp))
+            
+            send_image(client_socket, frame, qualities)
     finally:
-        LOG_DIR = os.path.dirname(LOG_FILE)
-        os.makedirs(LOG_DIR, exist_ok=True)  # Ensure the directory exists
-        with open(LOG_FILE, 'w') as f:
-            json.dump(log, f, indent=4)
-        print(f'Saved log to {LOG_FILE}')
+        cap.release()
+        client_socket.close()
 
 if __name__ == '__main__':
-    start_client(HOST, PORT, width=WIDTH, height=HEIGHT)  # Example: setting resolution to 1280x720
+    main()
