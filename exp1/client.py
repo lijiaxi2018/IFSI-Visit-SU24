@@ -46,6 +46,8 @@ def start_client(image_dir, host='localhost', port=65432):
     except Exception as e:
         print(f'Error: {e}')
     finally:
+        LOG_DIR = os.path.dirname(LOG_FILE)
+        os.makedirs(LOG_DIR, exist_ok=True)  # Ensure the directory exists
         with open(LOG_FILE, 'w') as f:
             json.dump(log, f, indent=4)
         print(f'Saved log to {LOG_FILE}')

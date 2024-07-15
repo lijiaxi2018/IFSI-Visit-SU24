@@ -3,10 +3,10 @@ import socket
 import time
 import json
 
-HOST = 'localhost'
+HOST = '192.168.0.130'
 PORT = 65432
-RECEIVE_DIRECTORY = './temp/TF_ETE_S_4K_cropped'
-LOG_FILE = './temp/TF_ETE_S_4K_cropped.json'
+RECEIVE_DIRECTORY = './temp/ETE_S_1K_cropped'
+LOG_FILE = './temp/ETE_S_1K_cropped.json'
 
 def save_image(image_data, save_path):
     with open(save_path, 'wb') as f:
@@ -62,6 +62,8 @@ def start_server(result_dir, host='localhost', port=65432):
     except Exception as e:
         print(f'Error: {e}')
     finally:
+        LOG_DIR = os.path.dirname(LOG_FILE)
+        os.makedirs(LOG_DIR, exist_ok=True)  # Ensure the directory exists
         with open(LOG_FILE, 'w') as f:
             json.dump(log, f, indent=4)
         print(f'Saved log to {LOG_FILE}')
