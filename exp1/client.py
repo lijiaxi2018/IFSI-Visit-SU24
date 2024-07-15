@@ -2,13 +2,12 @@ import os
 import socket
 import time
 import json
-import struct
 from get_power import readAllValue
 
 HOST = 'localhost'
 PORT = 65432
-SEND_DIRECTORY = '../Client-AGX-Dataset/1K_Full'
-LOG_FILE = './1K_Full_Client.json'
+SEND_DIRECTORY = '../../../assets/TF_ETE_S_4K_cropped'
+LOG_FILE = './temp/TF_ETE_S_4K_cropped.json'
 
 def send_image(image_path, conn, log):
     image_name = os.path.basename(image_path)
@@ -24,22 +23,10 @@ def send_image(image_path, conn, log):
     conn.sendall(image_data)
     end_time = time.time()
 
-    # Receive server's timestamps
-    server_start_time = struct.unpack('d', conn.recv(8))[0]
-    server_end_time = struct.unpack('d', conn.recv(8))[0]
-
-    # Calculate bandwidth
-    duration = server_end_time - server_start_time
-    bandwidth = len(image_data) / duration  # bytes per second
-
     log.append({
         'image': image_name,
-        'client_start_time': start_time,
-        'client_end_time': end_time,
-        'server_start_time': server_start_time,
-        'server_end_time': server_end_time,
-        'duration': duration,
-        'bandwidth': bandwidth,
+        'start_time': start_time,
+        'end_time': end_time,
         'energy': readAllValue(),
     })
 
@@ -59,8 +46,6 @@ def start_client(image_dir, host='localhost', port=65432):
     except Exception as e:
         print(f'Error: {e}')
     finally:
-        if not os.path.exists(os.path.dirname(LOG_FILE)):
-            os.makedirs(os.path.dirname(LOG_FILE))
         with open(LOG_FILE, 'w') as f:
             json.dump(log, f, indent=4)
         print(f'Saved log to {LOG_FILE}')

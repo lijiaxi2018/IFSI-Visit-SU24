@@ -5,12 +5,12 @@ import json
 import struct
 import cv2
 
-HOST = 'localhost'
+HOST = '192.168.0.242'
 PORT = 65432
-LOG_FILE = '../../../assets/log/CLIENT_120_1K_Full.json'
+LOG_FILE = './temp/log/CLIENT_120_1K_Full.json'
 CAMERA_SOURCE = 1
-WIDTH = 3840 / 2
-HEIGHT = 1920 / 2
+WIDTH = 3840
+HEIGHT = 1920
 
 def send_image(image_name, image_data, conn, log):
     image_name_len = len(image_name).to_bytes(4, 'big')
